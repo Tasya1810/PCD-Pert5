@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Gabungan Fourier, DCT, & Wavelet (Channel RGB)</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f8fafc;
+    color: #1e293b;
+    margin: 0;
+    padding: 20px;
+}
+h3 {
+    color: #4f46e5;
+}
+.channel-container {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+.channel-block {
+    text-align: center;
+    background: white;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+canvas {
+    border: 1px solid #cbd5e1;
+    margin-top: 5px;
+    background: white;
+}
+#resolution {
+    margin-top: 10px;
+    font-weight: bold;
+}
+.button-group {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+button {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-size: 13px;
+    background: #4f46e5;
+}
+button:hover {
+    opacity: 0.9;
+}
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-fourier { background: #4f46e5; }
+.btn-ifourier { background: #7c3aed; }
+.btn-dct { background: #0891b2; }
+.btn-idct { background: #0d9488; }
+.btn-wavelet { background: #d97706; }
+</style>
+</head>
+<body>
+
+<h3>Gabungan Transformasi Fourier, DCT, & Haar Wavelet 2D (RGB)</h3>
+<canvas id="gambar" width="256" height="256"></canvas><br>
+<input type="file" id="file1" accept=".jpg,.jpeg,.png,.bmp"><br>
+<div id="resolution">Resolusi: -</div>
+
+<div class="button-group">
+    <button id="fourierBtn" class="btn-fourier" onclick="transformFourierRGB()" disabled>Fourier (RGB)</button>
+    <button id="ifourierBtn" class="btn-ifourier" onclick="inverseFourierRGB()" disabled>Inverse Fourier (RGB)</button>
+    <button id="dctBtn" class="btn-dct" onclick="transformDCTRGB()" disabled>DCT (RGB)</button>
+    <button id="idctBtn" class="btn-idct" onclick="inverseDCTRGB()" disabled>Inverse DCT (RGB)</button>
+    <button id="waveletBtn" class="btn-wavelet" onclick="transformWavelet('gambar')" disabled>Wavelet</button>
+</div>
+
+<div id="channels" class="channel-container"></div>
+
+<script>
+let originalImageData = null;
+let width = 0, height = 0;
+
+// Variabel Penyimpanan Data Frekuensi Fourier RGB
+let fourierR = null, fourierG = null, fourierB = null;
+// Variabel Penyimpanan Data Frekuensi DCT RGB
+let dctR = null, dctG = null, dctB = null;
+
+function loadImage(fileInput, canvasId) {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const canvas = document.getElementById(canvasId);
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = function () {
+        width = img.width;
+        height = img.height;
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0);
+        originalImageData = ctx.getImageData(0, 0, width, height);
+
+        fourierR = fourierG = fourierB = null;
+        dctR = dctG = dctB = null;
+
+        document.getElementById("fourierBtn").disabled = false;
+        document.getElementById("dctBtn").disabled = false;
+        document.getElementById("waveletBtn").disabled = false;
+        document.getElementById("ifourierBtn").disabled = true;
+        document.getElementById("idctBtn").disabled = true;
+
+        document.getElementById("resolution").textContent = `Resolusi: ${width} x ${height} pixel`;
+        clearChannels();
+    };
+    img.src = URL.createObjectURL(file);
+}
+
+document.getElementById("file1").addEventListener("change", function () {
+    loadImage(this, "gambar");
+});
+
+function clearChannels() {
+    document.getElementById("channels").innerHTML = "";
+}
+
+function createChannelCanvas(label, w, h, imgData) {
+    const container = document.getElementById("channels");
+    const block = document.createElement("div");
+    block.className = "channel-block";
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.putImageData(imgData, 0, 0);
+    const caption = document.createElement("p");
+    caption.textContent = label;
+    block.appendChild(canvas);
+    block.appendChild(caption);
+    container.appendChild(block);
+}
+
+// ==========================================
+// RUMUS DASAR 1D (FOURIER & DCT)
+// ==========================================
+function DFT1D(r, i) {
+    const N = r.length;
+    let oR = new Array(N).fill(0), oI = new Array(N).fill(0);
+    for (let k = 0; k < N; k++) {
+        let sumR = 0, sumI = 0;
+        for (let n = 0; n < N; n++) {
+            const angle = (2 * Math.PI * k * n) / N;
+            sumR += r[n] * Math.cos(angle) + i[n] * Math.sin(angle);
+            sumI += -r[n] * Math.sin(angle) + i[n] * Math.cos(angle);
+        }
+        oR[k] = sumR; oI[k] = sumI;
+    }
+    return { real: oR, imag: oI };
+}
+
+function IDFT1D(r, i) {
+    const N = r.length;
+    let oR = new Array(N).fill(0), oI = new Array(N).fill(0);
+    for (let n = 0; n < N; n++) {
+        let sumR = 0, sumI = 0;
+        for (let k = 0; k < N; k++) {
+            const angle = (2 * Math.PI * k * n) / N;
+            sumR += r[k] * Math.cos(angle) - i[k] * Math.sin(angle);
+            sumI += r[k] * Math.sin(angle) + i[k] * Math.cos(angle);
+        }
+        oR[n] = sumR / N; oI[n] = sumI / N;
+    }
+    return { real: oR, imag: oI };
+}
+
+function DCT1D(vector) {
+    const N = vector.length;
+    const result = new Array(N).fill(0);
+    const factor = Math.PI / N;
+    for (let k = 0; k < N; k++) {
+        let sum = 0;
+        for (let n = 0; n < N; n++) {
+            sum += vector[n] * Math.cos(factor * k * (n + 0.5));
+        }
+        result[k] = sum * (k === 0 ? Math.sqrt(1 / N) : Math.sqrt(2 / N));
+    }
+    return result;
+}
+
+function IDCT1D(vector) {
+    const N = vector.length;
+    const result = new Array(N).fill(0);
+    const factor = Math.PI / N;
+    for (let n = 0; n < N; n++) {
+        let sum = 0;
+        for (let k = 0; k < N; k++) {
+            const coef = (k === 0 ? Math.sqrt(1 / N) : Math.sqrt(2 / N));
+            sum += coef * vector[k] * Math.cos(factor * k * (n + 0.5));
+        }
+        result[n] = sum;
+    }
+    return result;
+}
+
+// ==========================================
+// FOURIER TRANSFORM RGB
+// ==========================================
+function compute2DFourier(channelData) {
+    let grid = [];
+    for (let y = 0; y < height; y++) {
+        grid[y] = [];
+        for (let x = 0; x < width; x++) {
+            let val = channelData[y * width + x];
+            if ((x + y) % 2 !== 0) val = -val; // Centering
+            grid[y][x] = val;
+        }
+    }
+    let rRows = [], iRows = [];
+    for (let y = 0; y < height; y++) {
+        let res = DFT1D(grid[y], new Array(width).fill(0));
+        rRows[y] = res.real; iRows[y] = res.imag;
+    }
+    let fReal = [], fImag = [];
+    for (let y = 0; y < height; y++) { fReal[y] = new Array(width).fill(0); fImag[y] = new Array(width).fill(0); }
+    for (let x = 0; x < width; x++) {
+        let colR = [], colI = [];
+        for (let y = 0; y < height; y++) { colR.push(rRows[y][x]); colI.push(iRows[y][x]); }
+        let res = DFT1D(colR, colI);
+        for (let y = 0; y < height; y++) { fReal[y][x] = res.real[y]; fImag[y][x] = res.imag[y]; }
+    }
+    return { real: fReal, imag: fImag };
+}
+
+function getFourierImgData(fReal, fImag) {
+    let mag = [], maxVal = 0, minVal = Infinity;
+    for (let y = 0; y < height; y++) {
+        mag[y] = [];
+        for (let x = 0; x < width; x++) {
+            let m = Math.log(1 + Math.sqrt(fReal[y][x]**2 + fImag[y][x]**2));
+            mag[y][x] = m;
+            if (m > maxVal) maxVal = m;
+            if (m < minVal) minVal = m;
+        }
+    }
+    let imgData = new ImageData(width, height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            let val = ((mag[y][x] - minVal) / (maxVal - minVal || 1)) * 255;
+            let i = (y * width + x) * 4;
+            imgData.data[i] = imgData.data[i+1] = imgData.data[i+2] = val;
+            imgData.data[i+3] = 255;
+        }
+    }
+    return imgData;
+}
+
+function transformFourierRGB() {
+    let rData = new Float64Array(width * height);
+    let gData = new Float64Array(width * height);
+    let bData = new Float64Array(width * height);
+
+    for (let i = 0; i < originalImageData.data.length; i += 4) {
+        let idx = i / 4;
+        rData[idx] = originalImageData.data[i];
+        gData[idx] = originalImageData.data[i+1];
+        bData[idx] = originalImageData.data[i+2];
+    }
+
+    fourierR = compute2DFourier(rData);
+    fourierG = compute2DFourier(gData);
+    fourierB = compute2DFourier(bData);
+
+    clearChannels();
+    createChannelCanvas("Fourier - Red Channel", width, height, getFourierImgData(fourierR.real, fourierR.imag));
+    createChannelCanvas("Fourier - Green Channel", width, height, getFourierImgData(fourierG.real, fourierG.imag));
+    createChannelCanvas("Fourier - Blue Channel", width, height, getFourierImgData(fourierB.real, fourierB.imag));
+    document.getElementById("ifourierBtn").disabled = false;
+}
+
+function inverseFourierRGB() {
+    function invChannel(fReal, fImag) {
+        let cReal = [], cImag = [];
+        for (let y = 0; y < height; y++) { cReal[y] = new Array(width); cImag[y] = new Array(width); }
+        for (let x = 0; x < width; x++) {
+            let colR = [], colI = [];
+            for (let y = 0; y < height; y++) { colR.push(fReal[y][x]); colI.push(fImag[y][x]); }
+            let res = IDFT1D(colR, colI);
+            for (let y = 0; y < height; y++) { cReal[y][x] = res.real[y]; cImag[y][x] = res.imag[y]; }
+        }
+        let out = new Float64Array(width * height);
+        for (let y = 0; y < height; y++) {
+            let res = IDFT1D(cReal[y], cImag[y]);
+            for (let x = 0; x < width; x++) {
+                let val = res.real[x];
+                if ((x + y) % 2 !== 0) val = -val;
+                out[y * width + x] = Math.max(0, Math.min(255, val));
+            }
+        }
+        return out;
+    }
+
+    let rRes = invChannel(fourierR.real, fourierR.imag);
+    let gRes = invChannel(fourierG.real, fourierG.imag);
+    let bRes = invChannel(fourierB.real, fourierB.imag);
+
+    let outImg = new ImageData(width, height);
+    for (let i = 0; i < width * height; i++) {
+        let idx = i * 4;
+        outImg.data[idx] = rRes[i];
+        outImg.data[idx+1] = gRes[i];
+        outImg.data[idx+2] = bRes[i];
+        outImg.data[idx+3] = 255;
+    }
+    createChannelCanvas("Inverse Fourier (RGB)", width, height, outImg);
+}
+
+// ==========================================
+// DCT TRANSFORM RGB
+// ==========================================
+function compute2DDCT(channelData) {
+    let gray = [];
+    for (let y = 0; y < height; y++) {
+        gray[y] = [];
+        for (let x = 0; x < width; x++) {
+            gray[y][x] = channelData[y * width + x];
+        }
+    }
+    let temp = [];
+    for (let y = 0; y < height; y++) temp[y] = DCT1D(gray[y]);
+    let dct2D = [];
+    for (let y = 0; y < height; y++) dct2D[y] = new Array(width).fill(0);
+    for (let x = 0; x < width; x++) {
+        let col = [];
+        for (let y = 0; y < height; y++) col.push(temp[y][x]);
+        let dctCol = DCT1D(col);
+        for (let y = 0; y < height; y++) dct2D[y][x] = dctCol[y];
+    }
+    return dct2D;
+}
+
+function getDCTImgData(dct2D) {
+    let maxVal = 0;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (Math.abs(dct2D[y][x]) > maxVal) maxVal = Math.abs(dct2D[y][x]);
+        }
+    }
+    let imgData = new ImageData(width, height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            let val = Math.round((Math.log(1 + Math.abs(dct2D[y][x])) / Math.log(1 + maxVal || 1)) * 255);
+            let i = (y * width + x) * 4;
+            imgData.data[i] = imgData.data[i+1] = imgData.data[i+2] = val;
+            imgData.data[i+3] = 255;
+        }
+    }
+    return imgData;
+}
+
+function transformDCTRGB() {
+    let rData = new Float64Array(width * height);
+    let gData = new Float64Array(width * height);
+    let bData = new Float64Array(width * height);
+
+    for (let i = 0; i < originalImageData.data.length; i += 4) {
+        let idx = i / 4;
+        rData[idx] = originalImageData.data[i];
+        gData[idx] = originalImageData.data[i+1];
+        bData[idx] = originalImageData.data[i+2];
+    }
+
+    dctR = compute2DDCT(rData);
+    dctG = compute2DDCT(gData);
+    dctB = compute2DDCT(bData);
+
+    clearChannels();
+    createChannelCanvas("DCT - Red Channel", width, height, getDCTImgData(dctR));
+    createChannelCanvas("DCT - Green Channel", width, height, getDCTImgData(dctG));
+    createChannelCanvas("DCT - Blue Channel", width, height, getDCTImgData(dctB));
+    document.getElementById("idctBtn").disabled = false;
+}
+
+function inverseDCTRGB() {
+    function invChannelDCT(dctMatrix) {
+        let temp = [];
+        for (let x = 0; x < width; x++) {
+            let col = [];
+            for (let y = 0; y < height; y++) col.push(dctMatrix[y][x]);
+            let idctCol = IDCT1D(col);
+            for (let y = 0; y < height; y++) {
+                if (!temp[y]) temp[y] = [];
+                temp[y][x] = idctCol[y];
+            }
+        }
+        let out = new Float64Array(width * height);
+        for (let y = 0; y < height; y++) {
+            let row = IDCT1D(temp[y]);
+            for (let x = 0; x < width; x++) {
+                out[y * width + x] = Math.max(0, Math.min(255, Math.round(row[x])));
+            }
+        }
+        return out;
+    }
+
+    let rRes = invChannelDCT(dctR);
+    let gRes = invChannelDCT(dctG);
+    let bRes = invChannelDCT(dctB);
+
+    let outImg = new ImageData(width, height);
+    for (let i = 0; i < width * height; i++) {
+        let idx = i * 4;
+        outImg.data[idx] = rRes[i];
+        outImg.data[idx+1] = gRes[i];
+        outImg.data[idx+2] = bRes[i];
+        outImg.data[idx+3] = 255;
+    }
+    createChannelCanvas("Inverse DCT (RGB)", width, height, outImg);
+}
+
+// ==========================================
+// HAAR WAVELET 2D (Sesuai Modul)
+// ==========================================
+function haarWavelet1D(vector) {
+    const N = vector.length;
+    const output = new Array(N).fill(0);
+    const half = Math.floor(N / 2);
+    for (let i = 0; i < half; i++) {
+        output[i] = (vector[2 * i] + vector[2 * i + 1]) / 2; // Approx
+        output[half + i] = (vector[2 * i] - vector[2 * i + 1]) / 2; // Detail
+    }
+    return output;
+}
+
+function transformWavelet(canvasId) {
+    clearChannels();
+    const canvas = document.getElementById(canvasId);
+    const ctx = canvas.getContext("2d");
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    width = canvas.width;
+    height = canvas.height;
+
+    let gray = [];
+    for (let y = 0; y < height; y++) {
+        gray[y] = [];
+        for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            gray[y][x] = Math.round(0.299 * imgData.data[i] + 0.587 * imgData.data[i + 1] + 0.114 * imgData.data[i + 2]);
+        }
+    }
+
+    let temp = [];
+    for (let y = 0; y < height; y++) temp[y] = haarWavelet1D(gray[y]);
+
+    let wavelet2D = [];
+    for (let x = 0; x < width; x++) {
+        const col = [];
+        for (let y = 0; y < height; y++) col.push(temp[y][x]);
+        const transformedCol = haarWavelet1D(col);
+        for (let y = 0; y < height; y++) {
+            if (!wavelet2D[y]) wavelet2D[y] = [];
+            wavelet2D[y][x] = transformedCol[y];
+        }
+    }
+
+    const halfW = Math.floor(width / 2);
+    const halfH = Math.floor(height / 2);
+
+    function createFullCanvas(startX, startY, w, h) {
+        const newImg = ctx.createImageData(width, height);
+        let maxVal = 0;
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const val = Math.abs(wavelet2D[startY + y][startX + x]);
+                if (val > maxVal) maxVal = val;
+            }
+        }
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const val = Math.round((Math.abs(wavelet2D[startY + y][startX + x]) / (maxVal || 1)) * 255);
+                const i = ((startY + y) * width + (startX + x)) * 4;
+                newImg.data[i] = newImg.data[i + 1] = newImg.data[i + 2] = val;
+                newImg.data[i + 3] = 255;
+            }
+        }
+        return newImg;
+    }
+
+    const LL = createFullCanvas(0, 0, halfW, halfH);
+    const LH = createFullCanvas(halfW, 0, width - halfW, halfH);
+    const HL = createFullCanvas(0, halfH, halfW, height - halfH);
+    const HH = createFullCanvas(halfW, halfH, width - halfW, height - halfH);
+
+    createChannelCanvas("LL (Approximation)", width, height, LL);
+    createChannelCanvas("LH (Horizontal)", width, height, LH);
+    createChannelCanvas("HL (Vertical)", width, height, HL);
+    createChannelCanvas("HH (Diagonal)", width, height, HH);
+}
+</script>
+
+</body>
+</html>
